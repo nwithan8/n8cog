@@ -8,6 +8,8 @@ from redbot.core.commands import Cog, Context
 from questionflow import QuestionFlow, Question, Answer, MultipleChoiceQuestion, Choice, YesNoQuestion, YesNoAnswer, \
     YesNo
 
+from n8cog.dm_configuration import DMConfiguration
+
 
 class BaseCog(Cog):
     """
@@ -37,14 +39,16 @@ class BaseCog(Cog):
 
     async def run_dm_questionnaire(self, user: Member,
                                    questions: List[Union[Question, MultipleChoiceQuestion, YesNoQuestion]],
-                                   consent_message: str = None) \
+                                   consent_message: str = None,
+                                   end_message: str = "Thank you. This questionnaire is complete.") \
             -> Union[List[Union[Question, MultipleChoiceQuestion, YesNoQuestion]], None]:
         """
-        Runs a questionnaire in a Direct Message with a Member.
+        Run a questionnaire in a Direct Message with a Member.
 
         :param user: The member to run the questionnaire for.
         :param questions: The questions to ask.
         :param consent_message: The consent message user should agree to before the questionnaire (optional).
+        :param end_message: The message to send when the questionnaire is complete.
         :return: The answered questions or None if the user cancelled the questionnaire.
         """
         dm_channel = None
@@ -85,8 +89,32 @@ class BaseCog(Cog):
                 await dm_channel.send("You answered incorrectly. This questionnaire has been cancelled.")
                 return None
 
+        if end_message is not None:
+            await dm_channel.send(end_message)
+
         answered_questions = []
         for question_number, _ in enumerate(questions):
             question: Question = flow.get_question_and_answer(question_number=question_number)
             answered_questions.append(question)
         return answered_questions
+
+    async def run_dm_configuration(self, user: Member,
+                                   configuration: DMConfiguration) \
+            -> Union[dict, None]:
+        """
+        Run a configuration questionnaire in a Direct Message with a Member.
+
+        :param user: The member to run the questionnaire for.
+        :param configuration: The configuration to ask.
+        :return: The compiled configuration or None if the user cancelled the questionnaire.
+        """
+        questions = configuration.questions
+        consent_message = configuration.pre_message
+        end_message = configuration.post_message
+        answered_questions = await self.run_dm_questionnaire(user=user, questions=questions,
+                                                             consent_message=consent_message,
+                                                             end_message=end_message)
+        if answered_questions is None:
+            return None
+
+        return configuration.process_answers(questions=answered_questions)
