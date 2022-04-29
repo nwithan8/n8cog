@@ -1,7 +1,12 @@
+import asyncio
 import logging
-from typing import Optional
+from typing import Optional, List, Union
 
+from discord import Member
 from redbot.core.commands import Cog, Context
+
+from questionflow import QuestionFlow, Question, Answer, MultipleChoiceQuestion, Choice, YesNoQuestion, YesNoAnswer, \
+    YesNo
 
 
 class BaseCog(Cog):
@@ -18,3 +23,70 @@ class BaseCog(Cog):
 
     async def send_error(self, ctx: Context, error_message: Optional[str] = None):
         await ctx.send(error_message or "Something went wrong!")
+
+    async def _send_and_get_dm_response(self, user: Member, message: str, timeout: int = 60) -> Union[str, None]:
+        await user.dm_channel.send(message)
+        try:
+            response = await self.bot.wait_for(
+                'message',
+                check=lambda x: x.channel == user.dm_channel and x.author == user,
+                timeout=timeout)
+            return response.content
+        except asyncio.TimeoutError:
+            return None
+
+    async def run_dm_questionnaire(self, user: Member,
+                                   questions: List[Union[Question, MultipleChoiceQuestion, YesNoQuestion]],
+                                   consent_message: str = None) \
+            -> Union[List[Union[Question, MultipleChoiceQuestion, YesNoQuestion]], None]:
+        """
+        Runs a questionnaire in a Direct Message with a Member.
+
+        :param user: The member to run the questionnaire for.
+        :param questions: The questions to ask.
+        :param consent_message: The consent message user should agree to before the questionnaire (optional).
+        :return: The answered questions or None if the user cancelled the questionnaire.
+        """
+        dm_channel = None
+        try:
+            dm_channel = user.dm_channel
+        except AttributeError:
+            dm_channel = await self.bot.create_dm(user)
+        if dm_channel is None:
+            dm_channel = await self.bot.create_dm(user)
+
+        if dm_channel is None:
+            raise Exception("Could not create DM channel.")
+
+        if consent_message is not None:
+            consent_flow = QuestionFlow(
+                questions=[YesNoQuestion(prompt=f"{consent_message}\n\nAnswer 'y' to continue.")])
+            consent_prompt = consent_flow.ask_next_question()
+
+            consent_response = await self._send_and_get_dm_response(user=user, message=consent_prompt)
+            if consent_response is None:
+                consent_response = "n"
+            consent_flow.answer(answer_string=consent_response)
+
+            consent_question: YesNoQuestion = consent_flow.get_question_and_answer(question_number=1)
+            consent_answer: YesNoAnswer = consent_question.answer
+            if consent_answer.enum == YesNo.NO:
+                await dm_channel.send("You did not agree. This questionnaire has been cancelled.")
+                return None
+
+        flow = QuestionFlow(questions=questions)
+        while flow.has_more_questions:
+            prompt = flow.ask_next_question()
+            answer = await self._send_and_get_dm_response(user=user, message=prompt)
+            if answer is None:
+                await dm_channel.send("You did not answer in time. This questionnaire has been cancelled.")
+                return None
+            if not flow.answer(answer_string=answer):
+                await dm_channel.send("You answered incorrectly. This questionnaire has been cancelled.")
+                return None
+
+        answered_questions = []
+        for question_number, _ in enumerate(questions):
+            question: Question = flow.get_question_and_answer(question_number=question_number)
+            answered_questions.append(question)
+        return answered_questions
