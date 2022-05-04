@@ -70,7 +70,10 @@ class BaseCog(Cog):
             consent_response = await self._send_and_get_dm_response(user=user, message=consent_prompt)
             if consent_response is None:
                 consent_response = "n"
-            consent_flow.answer(answer_string=consent_response)
+            processed_answer = consent_flow.answer(answer_string=consent_response)
+            if processed_answer is None or not processed_answer.valid:
+                await dm_channel.send("You answered incorrectly. This questionnaire has been cancelled.")
+                return None
 
             consent_question: YesNoQuestion = consent_flow.get_question_and_answer(question_number=1)
             consent_answer: YesNoAnswer = consent_question.answer
@@ -85,18 +88,15 @@ class BaseCog(Cog):
             if answer is None:
                 await dm_channel.send("You did not answer in time. This questionnaire has been cancelled.")
                 return None
-            if not flow.answer(answer_string=answer):
+            processed_answer = flow.answer(answer_string=answer)
+            if processed_answer is None or not processed_answer.valid:
                 await dm_channel.send("You answered incorrectly. This questionnaire has been cancelled.")
                 return None
 
         if end_message is not None:
             await dm_channel.send(end_message)
 
-        answered_questions = []
-        for question_number, _ in enumerate(questions):
-            question: Question = flow.get_question_and_answer(question_number=question_number)
-            answered_questions.append(question)
-        return answered_questions
+        return list(flow.questions_and_answers.values())
 
     async def run_dm_configuration(self, user: Member,
                                    configuration: DMConfiguration) \
